@@ -13,7 +13,7 @@ git clone git@github.com:AndreyPetriv-Wallarm/Wallarm-API-to-ELK.git
 ```
 Or download zip archive and unzip it
 
-![Download zip](.images/download.png)
+![Download zip](https://github.com/AndreyPetriv-Wallarm/Wallarm-API-to-ELK/blob/master/.images/download.png?raw=true)
 
 ### Prerequisites
 
