@@ -17,7 +17,7 @@ Or download zip archive and unzip it
 
 ### Prerequisites
 
-Things you need to install are python3 and the package installer (pip3) for Python installed by default.
+Things you need to install are python3 and the package installer (pip3) for Python, installed by default.
 
 Once installed, download required packages
 
@@ -36,7 +36,7 @@ python3 request.py
 ```sh
 --batch - the script will use env variables
 ```
-What are the environment variables it looks for?
+What the environment variables it looks for?
 - Mandatory
 ```sh
 WALLARM_API
@@ -56,7 +56,7 @@ WALLARM_UUID
 WALLARM_SECRET
 ```
 
-If both sets presented the script will use UUID/SECRET to authenticate in a cloud.
+If both sets presented, the script use UUID/SECRET to authenticate in the cloud.
 
 Otherwise, interactive mode is on.
 
