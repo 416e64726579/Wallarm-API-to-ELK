@@ -5,9 +5,9 @@ The purpose of which is to verify that certain concepts of interaction with API 
 
 ## Getting Started
 
-This project requires python3 and pip3 installed on your OS.
+This project requires python3 installed on your OS.
 
-Clone project from this repo
+Clone project from the repository
 ```sh
 git clone git@github.com:AndreyPetriv-Wallarm/Wallarm-API-to-ELK.git
 ```
@@ -32,9 +32,27 @@ Elasticsearch should be installed and configured listening on *localhost:9200*
 ```python 
 python3 request.py
 ```
+or
+```sh
+./request.py
+```
 ### Options
 ```sh
 --batch - the script will use env variables
+```
+### Example
+```sh
+$ ./request.py        
+Choose the way to authorize on a cloud
+1. Username/Password
+2. UUID/Secret
+Type 1 or 2
+Method to authorize is: 2
+API domain (without https://): api.wallarm.com
+UUID: ************
+Secret: 
+Choose date for the fetching data
+Date in format dd-mm-YYYY: 25-08-2019
 ```
 What the environment variables it looks for?
 - Mandatory
@@ -65,12 +83,12 @@ Otherwise, interactive mode is on.
 1. Login in Wallarm API
 2. Make requests to the following endpoints
 	* Attack
-	* Hit
-	* Details
-	* Blacklist
+	* Hit (commented by default)
+	* Details of the hit (commented by default)
+	* Blacklist 
 	* Blacklist history
 	* Vulnerability
-3. Send JSON formatted data to Elasticsearch (*localhost:9200*)
+3. Send JSON formatted data to Elasticsearch (*localhost:9200* by default)
 4. Create attack.json, hit.json, details.json, blacklist.json, blacklist_history.json, vulnerabilities.json with the information of requested resources
 
 ## Deployment

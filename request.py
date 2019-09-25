@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """This script offers to gather the data from Wallarm Cloud and send it to ELK stack hosted localhost by default"""
 
 import argparse
@@ -384,15 +384,16 @@ def parsing_arguments():
 
 
 def get_env():
-    """The function to pull out environment variables
+    """
+    The function to pull out environment variables
     Variables:
-    (mandatory)
-    WALLARM_API: The actual API URL to Wallarm Cloud
-    (optional)
-    WALLARM_USERNAME:  The username of the Wallarm account
-    WALLARM_PASSWORD: The password of the Wallarm account
-    WALLARM_UUID: The UUID of the Wallarm account
-    WALLARM_SECRET: The Secret of the Wallarm account
+        (mandatory)
+        WALLARM_API: The actual API URL to Wallarm Cloud
+        (optional)
+        WALLARM_USERNAME:  The username of the Wallarm account
+        WALLARM_PASSWORD: The password of the Wallarm account
+        WALLARM_UUID: The UUID of the Wallarm account
+        WALLARM_SECRET: The Secret of the Wallarm account
     """
 
     username = None
@@ -408,8 +409,9 @@ def get_env():
         if "WALLARM_UUID" in os.environ and "WALLARM_SECRET" in os.environ:
             uuid = os.environ['WALLARM_UUID']
             secret = os.environ['WALLARM_SECRET']
-    except NameError:
+    except KeyError:
         print("WALLARM_API env variable is not defined")
+        sys.exit(1)
 
         return api, username, password, uuid, secret
 
