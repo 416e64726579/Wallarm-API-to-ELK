@@ -1,81 +1,107 @@
+#!/usr/bin/env python
+"""This script offers to gather the data from Wallarm Cloud and send it to ELK stack hosted localhost by default"""
+
 import argparse
 import datetime
 import json
-from builtins import print
-
-import requests
 import time
 import sys
 import os
 import getpass
 
+import elasticsearch
+import requests
+
 from elasticsearch import Elasticsearch
 
 
-class Data(object):
-
-    def __init__(self, data):
-        self.__dict__ = data
-
-    def __getitem__(self, data):
-        self.__dict__ = data
-
-    def length(self):
-        return len(self.__dict__['body'])
-
-
 def send_to_elastic(**kwargs):
-    # es = Elasticsearch([{'host': 'localhost', 'port': '9200'}])
+    """This function gets the results (through args) of got from Wallarm Cloud and send it to ELK"""
+
     es = Elasticsearch(['http://localhost:9200'], http_auth=('elastic', 'changeme'))
 
     # Send the data into es
     if 'attack' in kwargs:
         for key, value in kwargs.items():
             print("The value of {} is {}".format(key, value))
-            es.index(index='attack', ignore=400, doc_type='wlrm', body=value)
+            es.index(index='attack', doc_type='wlrm', body=value)
 
     if 'hit' in kwargs:
         for key, value in kwargs.items():
-            es.index(index='hit', ignore=400, doc_type='wlrm', body=value)
+            es.index(index='hit', doc_type='wlrm', body=value)
 
     if 'detail' in kwargs:
         for key, value in kwargs.items():
-            es.index(index='detail', ignore=400, doc_type='wlrm', body=value)
+            es.index(index='detail', doc_type='wlrm', body=value)
 
     if 'blacklist' in kwargs:
         for key, value in kwargs.items():
-            es.index(index='blacklist', ignore=400, doc_type='wlrm', body=value)
+            es.index(index='blacklist', doc_type='wlrm', body=value)
 
     if 'vulns' in kwargs:
         for key, value in kwargs.items():
-            es.index(index='vulns', ignore=400, doc_type='wlrm', body=value)
+            es.index(index='vulns', doc_type='wlrm', body=value)
 
 
-class HandlerAPI(object):
+class HandlerAPI:
+    """This class works with the Wallarm API
+    Attributes:
+        api (str): The actual API URL to Wallarm Cloud
+        login (str): The login API call
+        attack (str): The attack API call
+        hit (str): The hit API call
+        details (str): The details of the attack API call
+        vulns (str): The vulnerabilities API call
+        user (str): The user information API call
+        blacklist (str): The current blacklist API call
+        blacklist_hist (str): The blacklist history API call
+    """
+
+    @classmethod
+    def update_api(cls, api):
+        """The method to initialize class attributes
+        Parameters:
+            api (str): The actual API URL to Wallarm Cloud
+        """
+        cls.api = api
+        cls.login = f'https://{api}/v1/login'
+        cls.attack = f'https://{api}/v1/objects/attack'
+        cls.hit = f'https://{api}/v1/objects/hit'
+        cls.details = f'https://{api}/v2/hit/details'
+        cls.vulns = f'https://{api}/v1/objects/vuln'
+        cls.user = f'https://{api}/v1/user'
+        cls.blacklist = f'https://{api}/v3/blacklist'
+        cls.blacklist_hist = f'https://{api}/v3/blacklist/history'
 
     def __init__(self, *args):
-        self.api = args[0]
-        self.auth = args[1]
+        self.auth = args[0]
         if self.auth == 'username':
-            self.username = args[2]
-            self.password = args[3]
+            self.username = args[1]
+            self.password = args[2]
         if self.auth == 'uuid':
-            self.uuid = args[2]
-            self.secret = args[3]
-        self.unixtime = args[4]
-        self.login = f'https://{self.api}/v1/login'
-        self.attack = f'https://{self.api}/v1/objects/attack'
-        self.hit = f'https://{self.api}/v1/objects/hit'
-        self.details = f'https://{self.api}/v2/hit/details'
-        self.vulns = f'https://{self.api}/v1/objects/vuln'
-        self.user = f'https://{self.api}/v1/user'
-        self.blacklist = f'https://{self.api}/v3/blacklist'
-        self.blacklist_hist = f'https://{self.api}/v3/blacklist/history'
+            self.uuid = args[1]
+            self.secret = args[2]
+        self.unixtime = args[3]
+
+        self.cookies = None
+        self.token = None
+        self.user_resp = None
+        self.clientid = None
+        self.attack_resp = None
+        self.size_of_attack = None
+        self.hit_resp = None
+        self.size_of_hit = None
+        self.details_resp = None
+        self.blacklist_resp = None
+        self.blacklist_hist_resp = None
+        self.vulns_resp = None
 
     def __del__(self):
         print("Object has been deleted")
 
     def authentication(self):
+        """The method to authenticate user in Cloud
+        Set up username and password to get a token"""
 
         # Credentials for API
         login_payload = {"username": f"{self.username}", "password": f"{self.password}"}
@@ -87,7 +113,7 @@ class HandlerAPI(object):
         if self.username is not None and self.password is not None:
             try:
                 # Login request
-                login_resp = requests.post(self.login, json=login_payload)
+                login_resp = requests.post(HandlerAPI.login, json=login_payload)
                 login_resp.raise_for_status()
                 login_resp.encoding = 'utf-8'
                 self.cookies = login_resp.cookies
@@ -97,7 +123,7 @@ class HandlerAPI(object):
                 if login_resp.status_code == requests.codes.ok:
                     # User parameters
                     user_payload = {"token": self.token}
-                    self.user_resp = requests.post(self.user, params=user_payload, cookies=self.cookies)
+                    self.user_resp = requests.post(HandlerAPI.user, params=user_payload, cookies=self.cookies)
                     print("Successfully authenticated")
                 else:
                     print("Login phase was failed")
@@ -119,47 +145,47 @@ class HandlerAPI(object):
                 sys.exit(42)
 
     def get_clientid(self):
-        if hasattr(self, "uuid") and hasattr(self, "secret"):
-            if self.uuid is not None and self.secret is not None:
-                self.user_resp = requests.post(self.user, headers={'X-WallarmAPI-UUID': self.uuid,
-                                                                   'X-WallarmAPI-Secret': self.secret})
+        """The method to write down client id and use it in following requests"""
+
+        if hasattr(self, "uuid") and hasattr(self, "secret") and self.uuid is not None and self.secret is not None:
+            self.user_resp = requests.post(HandlerAPI.user, headers={'X-WallarmAPI-UUID': self.uuid, 'X-WallarmAPI-Secret':self.secret})
         self.clientid = self.user_resp.json()['body']['clientid']
         print(f"Client id is {self.clientid}")
 
     def get_attack(self):
+        """The method to get attack information by filter"""
 
         if hasattr(self, "uuid") and hasattr(self, "secret"):
             attack_payload = {
                 "filter": {"clientid": [self.clientid], "vulnid": None, "!type": ["warn"],
                            "time": [[self.unixtime, None]]},
                 "limit": 50, "offset": 0, "order_by": "first_time", "order_desc": True}
-            attack_resp = requests.post(self.attack, json=attack_payload,
-                                        headers={'X-WallarmAPI-UUID': self.uuid,
-                                                 'X-WallarmAPI-Secret': self.secret})
+            self.attack_resp = requests.post(HandlerAPI.attack, json=attack_payload, headers={'X-WallarmAPI-UUID': self.uuid,
+                                                                                              'X-WallarmAPI-Secret': self.secret})
         else:
             attack_payload = {
                 "filter": {"clientid": [self.clientid], "vulnid": None, "!type": ["warn"],
                            "time": [[self.unixtime, None]]},
                 "limit": 50, "offset": 0, "order_by": "first_time", "order_desc": True, "token": self.token}
-            attack_resp = requests.post(self.attack, json=attack_payload, cookies=self.cookies)
+            self.attack_resp = requests.post(HandlerAPI.attack, json=attack_payload, cookies=self.cookies)
 
-        attack_pretty = json.dumps(json.loads(attack_resp.text), indent=2)
+        attack_pretty = json.dumps(json.loads(self.attack_resp.text), indent=2)
 
         try:
             send_to_elastic(attack=attack_pretty)
-        except:
-            pass
+        except elasticsearch.ConnectionError as err:
+            print(f"ES returned a non-OK (>=400) HTTP status code {err}")
+        except elasticsearch.TransportError as err:
+            print(f"The attacks haven't been sent to elastic due to problems with the connection to it: {err}")
         finally:
-            print("The attacks haven't been sent to elastic due to problems with the connection to it")
             # Writing attacks to the file "attack.json"
             with open("attack.json", 'w') as f:
-                json.dump(json.loads(attack_resp.text)['body'], f, indent=2)
+                json.dump(json.loads(self.attack_resp.text)['body'], f, indent=2)
 
-            self.attack_obj = Data(attack_resp.json())
-            self.size_of_attack = self.attack_obj.length()
-            # print(self.attack_obj.__dict__)
+            self.size_of_attack = len(self.attack_resp.json()['body'])
 
     def get_hit(self):
+        """The method to get hit (attack request) information by filter"""
 
         # Flush files if it exists
         f = open("hits.json", "w")
@@ -167,7 +193,7 @@ class HandlerAPI(object):
 
         try:
             for i in range(self.size_of_attack):
-                attack_id = self.attack_obj.body[i]['attackid']
+                attack_id = self.attack_resp.json()['body'][i]['attackid']
                 attack_id = attack_id.split(':')
                 if hasattr(self, "uuid") and hasattr(self, "secret"):
                     hit_payload = {"filter": [
@@ -175,36 +201,36 @@ class HandlerAPI(object):
                          "time": [[self.unixtime, None]], "clientid": [self.clientid],
                          "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}],
                         "limit": 50, "offset": 0, "order_by": "time", "order_desc": True}
-                    hit_resp = requests.post(self.hit, json=hit_payload, headers={'X-WallarmAPI-UUID': self.uuid,
-                                                 'X-WallarmAPI-Secret': self.secret})
+                    self.hit_resp = requests.post(HandlerAPI.hit, json=hit_payload, headers={'X-WallarmAPI-UUID': self.uuid,
+                                                                                        'X-WallarmAPI-Secret': self.secret})
                 else:
                     hit_payload = {"filter": [
                         {"vulnid": None, "!type": ["warn", "marker"], "!domain": ["127.0.0.1", "www.127.0.0.1"],
                          "time": [[self.unixtime, None]], "clientid": [self.clientid],
-                         "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}],
-                        "limit": 50, "offset": 0, "order_by": "time", "order_desc": True, "token": self.token}
-                    hit_resp = requests.post(self.hit, json=hit_payload, cookies=self.cookies)
+                         "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}], "limit": 50, "offset": 0,
+                        "order_by": "time", "order_desc": True, "token": self.token}
+                    self.hit_resp = requests.post(HandlerAPI.hit, json=hit_payload, cookies=self.cookies)
 
-                hit_pretty = json.dumps(json.loads(hit_resp.text), indent=2)
+                hit_pretty = json.dumps(json.loads(self.hit_resp.text), indent=2)
 
-                if hit_resp.status_code == requests.codes.ok:
+                if self.hit_resp.status_code == requests.codes.ok:
                     try:
                         send_to_elastic(hit=hit_pretty)
-                    except:
-                        pass
+                    except elasticsearch.ConnectionError as err:
+                        print(f"ES returned a non-OK (>=400) HTTP status code {err}")
+                    except elasticsearch.TransportError as err:
+                        print(
+                            f"The attacks haven't been sent to elastic due to problems with the connection to it: {err}")
                     finally:
-                        print("The attacks haven't been sent to elastic due to problems with the connection to it")
                         # Open file in append mode. If file does not exist, it creates a new file.
                         f = open("hits.json", "a")
-                        f.write(json.dumps(json.loads(hit_resp.text)['body'], sort_keys=True, indent=2))
+                        f.write(json.dumps(json.loads(self.hit_resp.text)['body'], sort_keys=True, indent=2))
                         f.close()
                 else:
                     print('HTTP status code is not 200')
                     sys.exit(1)
 
-                # Create instance of class Data in order to appeal to body directly as part of object
-                self.hit_obj = Data(hit_resp.json())
-                self.size_of_hit = self.hit_obj.length()
+                self.size_of_hit = len(self.hit_resp.json()['body'])
 
         except KeyError as err:
             print(
@@ -216,39 +242,42 @@ class HandlerAPI(object):
             sys.exit(1)
 
     def get_details(self):
+        """The method to get details about the particular attack request from previous ones calls"""
 
         f = open("details.json", "w")
         f.write('')
 
-        for i in range(self.size_of_attack):
-            for k in range(self.size_of_hit):
-                hit_id = self.hit_obj.body[k]['id']
-                if hasattr(self, "uuid") and hasattr(self, "secret"):
-                    details_payload = {"id": f"{hit_id[0]}:{hit_id[1]}"}
-                    self.details_resp = requests.get(self.details, params=details_payload,
-                                                     headers={'X-WallarmAPI-UUID': self.uuid,
-                                                    'X-WallarmAPI-Secret': self.secret})
-                else:
-                    details_payload = {"id": f"{hit_id[0]}:{hit_id[1]}", "token": self.token}
-                    self.details_resp = requests.get(self.details, params=details_payload, cookies=self.cookies)
+        # for i in range(self.size_of_attack):
+        for k in range(self.size_of_hit):
+            hit_id = self.hit_resp.json()['body'][k]['id']
+            if hasattr(self, "uuid") and hasattr(self, "secret"):
+                details_payload = {"id": f"{hit_id[0]}:{hit_id[1]}"}
+                self.details_resp = requests.get(HandlerAPI.details, params=details_payload,
+                                                 headers={'X-WallarmAPI-UUID': self.uuid,
+                                                          'X-WallarmAPI-Secret': self.secret})
+            else:
+                details_payload = {"id": f"{hit_id[0]}:{hit_id[1]}", "token": self.token}
+                self.details_resp = requests.get(HandlerAPI.details, params=details_payload, cookies=self.cookies)
 
-                details_pretty = json.dumps(json.loads(self.details_resp.text), indent=2)
+            details_pretty = json.dumps(json.loads(self.details_resp.text), indent=2)
 
-                if self.details_resp.status_code == requests.codes.ok:
-                    try:
-                        send_to_elastic(details=details_pretty)
-                    except:
-                        pass
-                    finally:
-                        print("The details of attacks haven't been sent to elastic due to problems with the connection to it")
-                        f = open("details.json", "a")
-                        f.write(json.dumps(json.loads(self.details_resp.text)['body'], sort_keys=True, indent=2))
-                        f.close()
-                else:
-                    print('HTTP status code is not 200')
-                    sys.exit(1)
+            if self.details_resp.status_code == requests.codes.ok:
+                try:
+                    send_to_elastic(details=details_pretty)
+                except elasticsearch.ConnectionError as err:
+                    print(f"ES returned a non-OK (>=400) HTTP status code {err}")
+                except elasticsearch.TransportError as err:
+                    print(f"The attacks haven't been sent to elastic due to problems with the connection to it: {err}")
+                finally:
+                    f = open("details.json", "a")
+                    f.write(json.dumps(json.loads(self.details_resp.text)['body'], sort_keys=True, indent=2))
+                    f.close()
+            else:
+                print('HTTP status code is not 200')
+                sys.exit(1)
 
     def get_blacklist(self):
+        """The method to get current blacklist and blacklist_history"""
 
         f = open("blacklist.json", "w")
         f.write('')
@@ -259,22 +288,23 @@ class HandlerAPI(object):
         attack_delay = 600
         if hasattr(self, "uuid") and hasattr(self, "secret"):
             blacklist_payload = {"attack_delay": attack_delay, "filter[clientid]": self.clientid}
-            self.blacklist_resp = requests.get(self.blacklist, params=blacklist_payload,
-                                                    headers={'X-WallarmAPI-UUID': self.uuid,
-                                                    'X-WallarmAPI-Secret': self.secret})
+            self.blacklist_resp = requests.get(HandlerAPI.blacklist, params=blacklist_payload,
+                                               headers={'X-WallarmAPI-UUID': self.uuid,
+                                                        'X-WallarmAPI-Secret': self.secret})
         else:
             blacklist_payload = {"attack_delay": attack_delay, "filter[clientid]": self.clientid, "token": self.token}
-            self.blacklist_resp = requests.get(self.blacklist, params=blacklist_payload, cookies=self.cookies)
+            self.blacklist_resp = requests.get(HandlerAPI.blacklist, params=blacklist_payload, cookies=self.cookies)
 
         blacklist_pretty = json.dumps(json.loads(self.blacklist_resp.text), indent=2)
 
         if self.blacklist_resp.status_code == requests.codes.ok:
             try:
                 send_to_elastic(blacklist=blacklist_pretty)
-            except:
-                pass
+            except elasticsearch.ConnectionError as err:
+                print(f"ES returned a non-OK (>=400) HTTP status code {err}")
+            except elasticsearch.TransportError as err:
+                print(f"The attacks haven't been sent to elastic due to problems with the connection to it: {err}")
             finally:
-                print("The blacklist hasn't been sent to elastic due to problems with the connection to it")
                 f = open("blacklist.json", "a")
                 f.write(json.dumps(json.loads(self.blacklist_resp.text)['body'], sort_keys=True, indent=2))
                 f.close()
@@ -282,21 +312,23 @@ class HandlerAPI(object):
         # Blacklist history
         if hasattr(self, "uuid") and hasattr(self, "secret"):
             blacklist_hist_payload = {"filter[clientid]": self.clientid, "filter[start_time]": self.unixtime,
-                                  "filter[end_time]": None}
-            self.blacklist_hist_resp = requests.get(self.blacklist_hist, params=blacklist_hist_payload,
+                                      "filter[end_time]": None}
+            self.blacklist_hist_resp = requests.get(HandlerAPI.blacklist_hist, params=blacklist_hist_payload,
                                                     headers={'X-WallarmAPI-UUID': self.uuid,
-                                                    'X-WallarmAPI-Secret': self.secret})
+                                                             'X-WallarmAPI-Secret': self.secret})
         else:
             blacklist_hist_payload = {"filter[clientid]": self.clientid, "filter[start_time]": self.unixtime,
-                                  "filter[end_time]": None, "token": self.token}
-            self.blacklist_hist_resp = requests.get(self.blacklist_hist, params=blacklist_hist_payload, cookies=self.cookies)
+                                      "filter[end_time]": None, "token": self.token}
+            self.blacklist_hist_resp = requests.get(HandlerAPI.blacklist_hist, params=blacklist_hist_payload,
+                                                    cookies=self.cookies)
 
-        blacklist_hist_pretty = json.dumps(json.loads(self.blacklist_hist_resp.text), indent=2)
+        # blacklist_hist_pretty = json.dumps(json.loads(self.blacklist_hist_resp.text), indent=2)
         f = open("blacklist_history.json", "a")
         f.write(json.dumps(json.loads(self.blacklist_hist_resp.text)['body'], sort_keys=True, indent=2))
         f.close()
 
     def get_vuln(self):
+        """The method to get vulnerabilities information"""
 
         f = open("vulnerabilities.json", "w")
         f.write('')
@@ -305,33 +337,37 @@ class HandlerAPI(object):
         if hasattr(self, "uuid") and hasattr(self, "secret"):
             vulns_payload = {"limit": 50, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
                              "order_desc": True}
-            self.vulns_resp = requests.get(self.vulns, params=vulns_payload, headers={'X-WallarmAPI-UUID': self.uuid,
+            self.vulns_resp = requests.get(HandlerAPI.vulns, params=vulns_payload,
+                                           headers={'X-WallarmAPI-UUID': self.uuid,
                                                     'X-WallarmAPI-Secret': self.secret})
         else:
             vulns_payload = {"limit": 50, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
                              "order_desc": True, "token": self.token}
-            self.vulns_resp = requests.get(self.vulns, params=vulns_payload, cookies=self.cookies)
+            self.vulns_resp = requests.get(HandlerAPI.vulns, params=vulns_payload, cookies=self.cookies)
 
         vulns_pretty = json.dumps(json.loads(self.vulns_resp.text), indent=2)
 
         if self.vulns_resp.status_code == requests.codes.ok:
             try:
                 send_to_elastic(vulns=vulns_pretty)
-            except:
-                pass
+            except elasticsearch.ConnectionError as err:
+                print(f"ES returned a non-OK (>=400) HTTP status code {err}")
+            except elasticsearch.TransportError as err:
+                print(f"The attacks haven't been sent to elastic due to problems with the connection to it: {err}")
             finally:
-                print("The vulnerabilities haven't been sent to elastic due to problems with the connection to it")
                 f = open("vulnerabilities.json", "a")
                 f.write(json.dumps(json.loads(self.vulns_resp.text)['body'], sort_keys=True, indent=2))
                 f.close()
 
 
 def parsing_arguments():
+    """The function to parse input arguments of the script"""
+
     parser = argparse.ArgumentParser(
         prog='''request.py''',
         usage='''python %(prog)s [options] (batch)''',
-        description='''This script may be used for request Wallarm API and send output directly to elasticsearch 
-        without any filtering''',
+        description='''This script may be used for request Wallarm API and send output directly to elasticsearch without
+         any filtering''',
         epilog="""This is PoC""",
         add_help=False)
 
@@ -348,6 +384,17 @@ def parsing_arguments():
 
 
 def get_env():
+    """The function to pull out environment variables
+    Variables:
+    (mandatory)
+    WALLARM_API: The actual API URL to Wallarm Cloud
+    (optional)
+    WALLARM_USERNAME:  The username of the Wallarm account
+    WALLARM_PASSWORD: The password of the Wallarm account
+    WALLARM_UUID: The UUID of the Wallarm account
+    WALLARM_SECRET: The Secret of the Wallarm account
+    """
+
     username = None
     password = None
     uuid = None
@@ -367,13 +414,19 @@ def get_env():
         return api, username, password, uuid, secret
 
 
-def get_pass(method):
+def get_pass(auth_method):
+    """The function to pull out credentials
+    Returns:
+        api (str): The actual API URL to Wallarm Cloud
+        username:  The username or uuid of the Wallarm account
+        password: The password or secret of the Wallarm account
+    """
     api = input("API domain (without https://): ")
-    if api == 'api.wallarm.com' or api == 'us1.api.wallarm.com':
-        if method == 'username':
+    if api in ('api.wallarm.com', 'us1.api.wallarm.com'):
+        if auth_method == 'username':
             username = input("Username: ")
             password = getpass.getpass(prompt='Password: ')
-        if method == 'uuid':
+        if auth_method == 'uuid':
             username = input("UUID: ")
             password = getpass.getpass(prompt='Secret: ')
     else:
@@ -384,17 +437,22 @@ def get_pass(method):
 
 
 def get_filter():
-    isValid = False
+    """The function to pull out filter by time
+    Returns:
+        unixtime (int): Time from epoch which data will be got from till now
+    """
+    # TODO: add the filter line as it did in the cloud
+
+    is_valid = False
     fail = 0
-    while not isValid and fail != 5:
+    while not is_valid and fail != 5:
         date_in = input("Choose date for the fetching data\nDate in format dd-mm-YYYY: ")
         try:
             day, month, year = map(int, date_in.split('-'))
             if year >= 2019:
-                # date = datetime.datetime.strptime(date_in, "%d-%m-%Y")
                 d = datetime.date(year, month, day)
                 unixtime = int(time.mktime(d.timetuple()))
-                isValid = True
+                is_valid = True
             else:
                 print('Year less than 2019. Try year => 2019')
         except ValueError:
@@ -402,7 +460,7 @@ def get_filter():
             fail += 1
             if fail == 4:
                 print("One attempt left")
-    if not isValid:
+    if not is_valid:
         print("Sorry, follow the rules, input the correct format date")
         sys.exit(1)
 
@@ -410,6 +468,11 @@ def get_filter():
 
 
 def main():
+    """The main function calls other functions and create an object to fulfill logic
+     Parsing arguments. In case --batch is presented use env variables
+     ($WALLARM_API/$WALLARM_USERNAME/$WALLARM_PASSWORD/WALLARM_UUID/WALLARM_SECRET) correspondingly, otherwise,
+    interactive mode is on"""
+
     # Parsing arguments. In case --batch is presented use env variables (
     # $WALLARM_API/$WALLARM_USERNAME/$WALLARM_PASSWORD/WALLARM_UUID/WALLARM_SECRET) correspondingly, otherwise,
     # interactive mode is on
@@ -417,16 +480,17 @@ def main():
     args = parsing_arguments()
     if args.batch:
         api, username, password, uuid, secret = get_env()
+        HandlerAPI.update_api(api)
         if username is not None and password is not None:
             now = int(datetime.datetime.now())
             unixtime = now - datetime.timedelta(days=7)
-            handler_object = HandlerAPI(api, "username", username, password, unixtime)
+            handler_object = HandlerAPI("username", username, password, unixtime)
             handler_object.get_clientid()
             handler_object.get_attack()
         elif uuid is not None and secret is not None:
             now = int(datetime.datetime.now())
             unixtime = now - datetime.timedelta(days=7)
-            handler_object = HandlerAPI(api, "uuid", uuid, secret, unixtime)
+            handler_object = HandlerAPI("uuid", uuid, secret, unixtime)
             handler_object.get_clientid()
             handler_object.get_attack()
         else:
@@ -439,25 +503,27 @@ def main():
 
         if auth_input == "1":
             api, username, password = get_pass('username')
+            HandlerAPI.update_api(api)
             unixtime = get_filter()
-            handler_object = HandlerAPI(api, "username", username, password, unixtime)
+            handler_object = HandlerAPI("username", username, password, unixtime)
             handler_object.authentication()
         elif auth_input == "2":
             api, uuid, secret = get_pass('uuid')
+            HandlerAPI.update_api(api)
             unixtime = get_filter()
-            handler_object = HandlerAPI(api, "uuid", uuid, secret, unixtime)
+            handler_object = HandlerAPI("uuid", uuid, secret, unixtime)
         else:
             print("Input the correct number")
             sys.exit(1)
         handler_object.get_clientid()
-        # handler_object.get_attack()
+        handler_object.get_attack()
+
+        # Commented to execute the script quickly
+
         # handler_object.get_hit()
         # handler_object.get_details()
         handler_object.get_blacklist()
         handler_object.get_vuln()
-
-    # Deleting of the object manually
-    # del handler_object
 
 
 if __name__ == '__main__':
