@@ -8,7 +8,6 @@ import time
 import sys
 import os
 import getpass
-
 import elasticsearch
 import requests
 
@@ -127,18 +126,18 @@ class HandlerAPI:
                     print("Successfully authenticated")
                 else:
                     print("Login phase was failed")
-                    sys.exit(1)
+                    raise SystemExit
 
             except requests.exceptions.SSLError as err:
                 print(f'SSL ERROR OCCURRED: \n{err}')
-                sys.exit(1)
+                raise SystemExit
             except requests.exceptions.ConnectionError as err:
                 print(f'CONNECTION ERROR OCCURRED: \n{err}')
-                sys.exit(1)
+                raise SystemExit
 
             except requests.exceptions.HTTPError as err:
                 print(f'HTTP ERROR OCCURRED: \n{err}')
-                sys.exit(1)
+                raise SystemExit
 
             except requests.exceptions.RequestException as err:
                 print(f'Other error occurred: \n{err}')
@@ -148,7 +147,8 @@ class HandlerAPI:
         """The method to write down client id and use it in following requests"""
 
         if hasattr(self, "uuid") and hasattr(self, "secret") and self.uuid is not None and self.secret is not None:
-            self.user_resp = requests.post(HandlerAPI.user, headers={'X-WallarmAPI-UUID': self.uuid, 'X-WallarmAPI-Secret':self.secret})
+            self.user_resp = requests.post(HandlerAPI.user,
+                                           headers={'X-WallarmAPI-UUID': self.uuid, 'X-WallarmAPI-Secret': self.secret})
         self.clientid = self.user_resp.json()['body']['clientid']
         print(f"Client id is {self.clientid}")
 
@@ -159,14 +159,16 @@ class HandlerAPI:
             attack_payload = {
                 "filter": {"clientid": [self.clientid], "vulnid": None, "!type": ["warn"],
                            "time": [[self.unixtime, None]]},
-                "limit": 50, "offset": 0, "order_by": "first_time", "order_desc": True}
-            self.attack_resp = requests.post(HandlerAPI.attack, json=attack_payload, headers={'X-WallarmAPI-UUID': self.uuid,
-                                                                                              'X-WallarmAPI-Secret': self.secret})
+                "limit": HandlerAPI.limit, "offset": 0, "order_by": "first_time", "order_desc": True}
+            self.attack_resp = requests.post(HandlerAPI.attack, json=attack_payload,
+                                             headers={'X-WallarmAPI-UUID': self.uuid,
+                                                      'X-WallarmAPI-Secret': self.secret})
         else:
             attack_payload = {
                 "filter": {"clientid": [self.clientid], "vulnid": None, "!type": ["warn"],
                            "time": [[self.unixtime, None]]},
-                "limit": 50, "offset": 0, "order_by": "first_time", "order_desc": True, "token": self.token}
+                "limit": HandlerAPI.limit, "offset": 0, "order_by": "first_time", "order_desc": True,
+                "token": self.token}
             self.attack_resp = requests.post(HandlerAPI.attack, json=attack_payload, cookies=self.cookies)
 
         attack_pretty = json.dumps(json.loads(self.attack_resp.text), indent=2)
@@ -200,14 +202,16 @@ class HandlerAPI:
                         {"vulnid": None, "!type": ["warn", "marker"], "!domain": ["127.0.0.1", "www.127.0.0.1"],
                          "time": [[self.unixtime, None]], "clientid": [self.clientid],
                          "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}],
-                        "limit": 50, "offset": 0, "order_by": "time", "order_desc": True}
-                    self.hit_resp = requests.post(HandlerAPI.hit, json=hit_payload, headers={'X-WallarmAPI-UUID': self.uuid,
-                                                                                        'X-WallarmAPI-Secret': self.secret})
+                        "limit": HandlerAPI.limit, "offset": 0, "order_by": "time", "order_desc": True}
+                    self.hit_resp = requests.post(HandlerAPI.hit, json=hit_payload,
+                                                  headers={'X-WallarmAPI-UUID': self.uuid,
+                                                           'X-WallarmAPI-Secret': self.secret})
                 else:
                     hit_payload = {"filter": [
                         {"vulnid": None, "!type": ["warn", "marker"], "!domain": ["127.0.0.1", "www.127.0.0.1"],
                          "time": [[self.unixtime, None]], "clientid": [self.clientid],
-                         "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}], "limit": 50, "offset": 0,
+                         "!experimental": True, "attackid": [attack_id[0], attack_id[1]]}], "limit": HandlerAPI.limit,
+                        "offset": 0,
                         "order_by": "time", "order_desc": True, "token": self.token}
                     self.hit_resp = requests.post(HandlerAPI.hit, json=hit_payload, cookies=self.cookies)
 
@@ -228,7 +232,7 @@ class HandlerAPI:
                         f.close()
                 else:
                     print('HTTP status code is not 200')
-                    sys.exit(1)
+                    raise SystemExit
 
                 self.size_of_hit = len(self.hit_resp.json()['body'])
 
@@ -236,10 +240,10 @@ class HandlerAPI:
             print(
                 f'Either the response is empty or no key you tried to get: \n{err} \nPerhaps, you may need to increase the '
                 f'time range')
-            sys.exit(1)
+            raise SystemExit
         except requests.exceptions.RequestException as err:
             print(f'Other error occurred: \n{err}')
-            sys.exit(1)
+            raise SystemExit
 
     def get_details(self):
         """The method to get details about the particular attack request from previous ones calls"""
@@ -247,7 +251,6 @@ class HandlerAPI:
         f = open("details.json", "w")
         f.write('')
 
-        # for i in range(self.size_of_attack):
         for k in range(self.size_of_hit):
             hit_id = self.hit_resp.json()['body'][k]['id']
             if hasattr(self, "uuid") and hasattr(self, "secret"):
@@ -274,7 +277,7 @@ class HandlerAPI:
                     f.close()
             else:
                 print('HTTP status code is not 200')
-                sys.exit(1)
+                raise SystemExit
 
     def get_blacklist(self):
         """The method to get current blacklist and blacklist_history"""
@@ -335,13 +338,13 @@ class HandlerAPI:
 
         # Vulnerabilities
         if hasattr(self, "uuid") and hasattr(self, "secret"):
-            vulns_payload = {"limit": 50, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
+            vulns_payload = {"limit": HandlerAPI.limit, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
                              "order_desc": True}
             self.vulns_resp = requests.get(HandlerAPI.vulns, params=vulns_payload,
                                            headers={'X-WallarmAPI-UUID': self.uuid,
                                                     'X-WallarmAPI-Secret': self.secret})
         else:
-            vulns_payload = {"limit": 50, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
+            vulns_payload = {"limit": HandlerAPI.limit, "offset": 0, "filter": {"status": "open"}, "order_by": "threat",
                              "order_desc": True, "token": self.token}
             self.vulns_resp = requests.get(HandlerAPI.vulns, params=vulns_payload, cookies=self.cookies)
 
@@ -411,9 +414,9 @@ def get_env():
             secret = os.environ['WALLARM_SECRET']
     except KeyError:
         print("WALLARM_API env variable is not defined")
-        sys.exit(1)
+        raise SystemExit
 
-        return api, username, password, uuid, secret
+    return api, username, password, uuid, secret
 
 
 def get_pass(auth_method):
@@ -433,7 +436,7 @@ def get_pass(auth_method):
             password = getpass.getpass(prompt='Secret: ')
     else:
         print("That's not Wallarm API address")
-        sys.exit(1)
+        raise SystemExit
 
     return api, username, password
 
@@ -464,20 +467,53 @@ def get_filter():
                 print("One attempt left")
     if not is_valid:
         print("Sorry, follow the rules, input the correct format date")
-        sys.exit(1)
+        raise SystemExit
 
     return unixtime
+
+
+def get_domain():
+    """The function to pull out domain for the filter
+    Returns:
+        domain (str): Domain to search if it's empty use default (without filtration)
+    """
+    try:
+        domain = input("Choose the domain to specify the filter: ")
+    except ValueError:
+        domain = ''
+
+    return domain
+
+
+def get_limit():
+    """The function to pull out a limit of the requested entries of attacks, hits, blacklist and so on
+    Returns:
+        limit (int): Limit of the entries in one query
+    """
+    is_valid = False
+    fail = 0
+    while not is_valid and fail != 5:
+        limit = input("Choose the limit of output entries to specify the filter: ")
+        try:
+            val = int(limit)
+            is_valid = True
+        except ValueError:
+            print("That's not an integer! Try again: \n")
+            fail += 1
+            if fail == 4:
+                print("One attempt left")
+    if not is_valid:
+        print("Sorry, follow the rules, input an integer number of a limit")
+        raise SystemExit
+
+    return int(limit)
 
 
 def main():
     """The main function calls other functions and create an object to fulfill logic
      Parsing arguments. In case --batch is presented use env variables
      ($WALLARM_API/$WALLARM_USERNAME/$WALLARM_PASSWORD/WALLARM_UUID/WALLARM_SECRET) correspondingly, otherwise,
-    interactive mode is on"""
-
-    # Parsing arguments. In case --batch is presented use env variables (
-    # $WALLARM_API/$WALLARM_USERNAME/$WALLARM_PASSWORD/WALLARM_UUID/WALLARM_SECRET) correspondingly, otherwise,
-    # interactive mode is on
+    interactive mode is on. One week search by default"""
 
     args = parsing_arguments()
     if args.batch:
@@ -486,37 +522,45 @@ def main():
         if username is not None and password is not None:
             now = int(datetime.datetime.now())
             unixtime = now - datetime.timedelta(days=7)
+            # HandlerAPI.domain = get_domain()
+            HandlerAPI.limit = 50
             handler_object = HandlerAPI("username", username, password, unixtime)
             handler_object.get_clientid()
             handler_object.get_attack()
         elif uuid is not None and secret is not None:
             now = int(datetime.datetime.now())
             unixtime = now - datetime.timedelta(days=7)
+            # HandlerAPI.domain = get_domain()
+            HandlerAPI.limit = 50
             handler_object = HandlerAPI("uuid", uuid, secret, unixtime)
             handler_object.get_clientid()
             handler_object.get_attack()
         else:
             print("Environment is not exported. Use interactive mode (start script without arguments) or set "
-                  "environment variables correspomdingly")
-            sys.exit(1)
+                  "environment variables correspondingly")
+            raise SystemExit
     else:
-        print("Choose the way to authorize on a cloud\n1. Username/Password\n2. UUID/Secret\nType 1 or 2")
+        print("Choose the way to authorize in the Wallarm cloud\n1. Username/Password\n2. UUID/Secret\nType 1 or 2")
         auth_input = input("Method to authorize is: ")
 
         if auth_input == "1":
             api, username, password = get_pass('username')
             HandlerAPI.update_api(api)
             unixtime = get_filter()
+            # HandlerAPI.domain = get_domain()
+            HandlerAPI.limit = get_limit()
             handler_object = HandlerAPI("username", username, password, unixtime)
             handler_object.authentication()
         elif auth_input == "2":
             api, uuid, secret = get_pass('uuid')
             HandlerAPI.update_api(api)
             unixtime = get_filter()
+            # HandlerAPI.domain = get_domain()
+            HandlerAPI.limit = get_limit()
             handler_object = HandlerAPI("uuid", uuid, secret, unixtime)
         else:
             print("Input the correct number")
-            sys.exit(1)
+            raise SystemExit
         handler_object.get_clientid()
         handler_object.get_attack()
 
