@@ -22,7 +22,7 @@ def send_to_elastic(**kwargs):
     # Send the data into es
     if 'attack' in kwargs:
         for key, value in kwargs.items():
-            print("The value of {} is {}".format(key, value))
+            # print("The value of {} is {}".format(key, value))
             es.index(index='attack', doc_type='wlrm', body=value)
 
     if 'hit' in kwargs:
@@ -77,15 +77,14 @@ class HandlerAPI:
         if self.auth == 'username':
             self.username = args[1]
             self.password = args[2]
+            self.cookies, self.token = self.authentication()
         if self.auth == 'uuid':
             self.uuid = args[1]
             self.secret = args[2]
         self.unixtime = args[3]
 
-        self.cookies = None
-        self.token = None
+        self.clientid = self.get_clientid()
         self.user_resp = None
-        self.clientid = None
         self.attack_resp = None
         self.size_of_attack = None
         self.hit_resp = None
@@ -99,7 +98,7 @@ class HandlerAPI:
         print("Object has been deleted")
 
     def authentication(self):
-        """The method to authenticate user in Cloud
+        """The method to authenticate user in the Wallarm Cloud
         Set up username and password to get a token"""
 
         # Credentials for API
@@ -115,14 +114,14 @@ class HandlerAPI:
                 login_resp = requests.post(HandlerAPI.login, json=login_payload)
                 login_resp.raise_for_status()
                 login_resp.encoding = 'utf-8'
-                self.cookies = login_resp.cookies
+                cookies = login_resp.cookies
                 login_json = login_resp.json()
-                self.token = login_json['body']['token']
+                token = login_json['body']['token']
                 # If login was successful send next requests you need
                 if login_resp.status_code == requests.codes.ok:
                     # User parameters
-                    user_payload = {"token": self.token}
-                    self.user_resp = requests.post(HandlerAPI.user, params=user_payload, cookies=self.cookies)
+                    user_payload = {"token": token}
+                    self.user_resp = requests.post(HandlerAPI.user, params=user_payload, cookies=cookies)
                     print("Successfully authenticated")
                 else:
                     print("Login phase was failed")
@@ -143,14 +142,18 @@ class HandlerAPI:
                 print(f'Other error occurred: \n{err}')
                 sys.exit(42)
 
+        return cookies, token
+
     def get_clientid(self):
         """The method to write down client id and use it in following requests"""
 
         if hasattr(self, "uuid") and hasattr(self, "secret") and self.uuid is not None and self.secret is not None:
             self.user_resp = requests.post(HandlerAPI.user,
                                            headers={'X-WallarmAPI-UUID': self.uuid, 'X-WallarmAPI-Secret': self.secret})
-        self.clientid = self.user_resp.json()['body']['clientid']
-        print(f"Client id is {self.clientid}")
+        clientid = self.user_resp.json()['body']['clientid']
+        print(f"Client id is {clientid}")
+
+        return clientid
 
     def get_attack(self):
         """The method to get attack information by filter"""
@@ -525,7 +528,6 @@ def main():
             # HandlerAPI.domain = get_domain()
             HandlerAPI.limit = 50
             handler_object = HandlerAPI("username", username, password, unixtime)
-            handler_object.get_clientid()
             handler_object.get_attack()
         elif uuid is not None and secret is not None:
             now = int(datetime.datetime.now())
@@ -533,7 +535,6 @@ def main():
             # HandlerAPI.domain = get_domain()
             HandlerAPI.limit = 50
             handler_object = HandlerAPI("uuid", uuid, secret, unixtime)
-            handler_object.get_clientid()
             handler_object.get_attack()
         else:
             print("Environment is not exported. Use interactive mode (start script without arguments) or set "
@@ -550,7 +551,6 @@ def main():
             # HandlerAPI.domain = get_domain()
             HandlerAPI.limit = get_limit()
             handler_object = HandlerAPI("username", username, password, unixtime)
-            handler_object.authentication()
         elif auth_input == "2":
             api, uuid, secret = get_pass('uuid')
             HandlerAPI.update_api(api)
@@ -561,7 +561,6 @@ def main():
         else:
             print("Input the correct number")
             raise SystemExit
-        handler_object.get_clientid()
         handler_object.get_attack()
 
         # Commented to execute the script quickly
