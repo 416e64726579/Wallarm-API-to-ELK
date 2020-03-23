@@ -1,0 +1,2 @@
+class NonSuccessResponse(Exception):
+    pass
