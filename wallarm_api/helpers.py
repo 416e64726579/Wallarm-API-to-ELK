@@ -6,7 +6,7 @@ class _Decorators:
     def try_decorator(cls, fn):
         logger = logging.getLogger(__name__)
 
-        def decorated(*args, **kw):
+        async def decorated(*args, **kw):
             for _ in range(5):
                 try:
                     value = fn(*args, **kw)
@@ -17,6 +17,6 @@ class _Decorators:
                     break
             else:
                 raise Exception(f'Function "{fn.__name__}" somehow did not work for 5 times')
-            return value
+            return await value
 
         return decorated

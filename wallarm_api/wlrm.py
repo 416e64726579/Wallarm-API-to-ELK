@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """This script offers to work with Wallarm Cloud API"""
-import datetime
+
+import asyncio
 import json
 import socket
 from urllib.parse import urlparse
 import requests
+import aiohttp
+import time
 from elasticsearch import Elasticsearch
-from .exceptions import NonSuccessResponse
+from .exceptions import NonSuccessResponse, ClosedSocket
 from .helpers import _Decorators
 
 
@@ -19,10 +22,32 @@ class WallarmAPI:
         self.clientid = self.get_clientid()
 
     @_Decorators.try_decorator
+    async def fetch(self, session, url, params=None, body=None, ssl=False):
+        """Generic fetch method"""
+
+        if params:
+            async with session.get(url, params=params,
+                                   headers={'X-WallarmAPI-UUID': self.__uuid,
+                                            'X-WallarmAPI-Secret': self.__secret},
+                                   ssl=ssl) as response:
+                if response.status not in [200, 201, 202, 204, 304]:
+                    raise NonSuccessResponse()
+                return await response.json()
+        elif body:
+            async with session.post(url, json=body,
+                                    headers={'X-WallarmAPI-UUID': self.__uuid,
+                                             'X-WallarmAPI-Secret': self.__secret},
+                                    ssl=ssl) as response:
+                if response.status not in [200, 201, 202, 204, 304]:
+                    raise NonSuccessResponse()
+                return await response.json()
+
     def get_clientid(self):
-        client_url = f'https://{self.__api}/v1/objects/client'
-        client_body = {"filter": {}}
-        with requests.post(client_url, json=client_body,
+        """The method to fetch a clientid for some queries"""
+
+        url = f'https://{self.__api}/v1/objects/client'
+        body = {"filter": {}}
+        with requests.post(url, json=body,
                            headers={'X-WallarmAPI-UUID': self.__uuid,
                                     'X-WallarmAPI-Secret': self.__secret}) as response:
             if response.status_code not in [200, 201, 202, 204, 304]:
@@ -30,108 +55,121 @@ class WallarmAPI:
         return response.json().get('body')[0].get('id')
 
     @_Decorators.try_decorator
-    async def get_attack(self, start='today', end=None, limit=100):
-        """The method to fetch attacks by filter"""
+    async def get_search(self, query='today'):
+        """The method to fetch unix time by human-readable filter"""
 
-        if start in ['today', 'last day', 'yesterday']:
-            start = int((datetime.date.today() - datetime.timedelta(1)).strftime("%s"))
-        if start == 'last week':
-            start = int((datetime.date.today() - datetime.timedelta(7)).strftime("%s"))
+        url = f'https://{self.__api}/v1/search'
+        body = {"query": query, "time_zone": f'UTC{time.timezone/3600.0}'}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
+
+    @_Decorators.try_decorator
+    async def get_attack_count(self, search_time):
+        """The method to fetch the number of attacks by filter"""
+
+        url = f'https://{self.__api}/v1/objects/attack/count'
+        body = {"filter": {"!type": ["warn"], "time": search_time}}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
+
+    @_Decorators.try_decorator
+    async def get_attack(self, search_time, limit=1000, offset=0):
+        """The method to fetch attacks by filter"""
 
         url = f'https://{self.__api}/v1/objects/attack'
         body = {"filter": {"vulnid": None, "!type": ["warn"],
-                           "time": [[start, end]]},
-                "limit": limit, "offset": 0, "order_by": "first_time", "order_desc": True}
-        with requests.post(url, json=body,
-                           headers={'X-WallarmAPI-UUID': self.__uuid,
-                                    'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-            return response.json()
+                           "time": search_time},
+                "limit": limit, "offset": offset, "order_by": "first_time", "order_desc": True}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
 
     @_Decorators.try_decorator
-    async def get_vuln(self, limit=100):
+    async def get_hit(self, attackid, limit=1000, offset=0):
+        """The method to fetch hits by filter"""
+
+        url = f'https://{self.__api}/v1/objects/hit'
+        body = {"filter": [{"vulnid": None, "!type": ["warn", "marker"], "!experimental": True,
+                            "attackid": [attackid], "!state": "falsepositive"}], "limit": limit, "offset": offset,
+                "order_by": "time", "order_desc": True}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
+
+    @_Decorators.try_decorator
+    async def get_rawhit(self, hitid):
+        """The method to fetch details of hits by filter"""
+
+        url = f'https://{self.__api}/v2/hit/details'
+        params = {"id": hitid}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, params=params)
+        return response
+
+    @_Decorators.try_decorator
+    async def get_vuln(self, limit=1000, offset=0):
         """The method to get vulnerabilities information"""
 
         url = f'https://{self.__api}/v1/objects/vuln'
-        body = {"limit": limit, "offset": 0, "filter": {"status": "open"}, "order_by": "threat", "order_desc": True}
-        with requests.post(url, json=body,
-                           headers={'X-WallarmAPI-UUID': self.__uuid,
-                                    'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-        return response.json()
+        body = {"limit": limit, "offset": offset, "filter": {"status": "open"}, "order_by": "threat", "order_desc": True}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
 
     @_Decorators.try_decorator
-    async def get_action(self, hint_type=None, limit=1000):
+    async def get_action(self, hint_type=None, limit=1000, offset=0):
         """The method to get action information"""
 
         url = f'https://{self.__api}/v1/objects/action'
-        # body = {"filter": {"hints_count": [[1, None]], "hint_type": ["uploads", "binary_data", "variative_values",
-        # "variative_keys", "variative_by_regex", "vpatch", "regex", "experimental_regex", "middleware", "brute_counter",
-        # "dirbust_counter", "experimental_stamp", "disable_ld_context", "attack_rechecker", "parse_mode", "parser_state",
-        # "overlimit_res", "disable_stamp", "disable_regex", "disable_attack_type", "max_serialize_data_size", "sensitive_data",
-        # "optional_parameter", "required_parameter", "attack_rechecker_rewrite", "wallarm_mode", "set_response_header", "tag",
-        # "html_response_content_type_regex", "html_response_max_values_per_key"]}, "limit": 1000, "offset": 0}
         if not hint_type:
-            body = {"filter": {}, "limit": limit, "offset": 0}
+            body = {"filter": {}, "limit": limit, "offset": offset}
         else:
-            body = {"filter": {"hint_type": [hint_type]}, "limit": limit, "offset": 0}
+            body = {"filter": {"hint_type": [hint_type]}, "limit": limit, "offset": offset}
 
-        with requests.post(url, json=body,
-                           headers={'X-WallarmAPI-UUID': self.__uuid,
-                                    'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-        return response.json()
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
 
     @_Decorators.try_decorator
-    async def get_hint(self):
+    async def get_hint(self, limit=1000, offset=0):
         """The method to get hint information"""
 
         url = f'https://{self.__api}/v1/objects/hint'
-        body = {"filter": {}, "order_by": "updated_at", "order_desc": True, "limit": 1000, "offset": 0}
-        with requests.post(url, json=body,
-                           headers={'X-WallarmAPI-UUID': self.__uuid,
-                                    'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-        return response.json()
+        body = {"filter": {}, "order_by": "updated_at", "order_desc": True, "limit": limit, "offset": offset}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
 
     @_Decorators.try_decorator
-    async def get_blacklist(self):
+    async def get_blacklist(self, limit=1000):
         """The method to get blacklist information"""
 
         url = f'https://{self.__api}/v3/blacklist'
-        body = {f"filter[clientid]": self.clientid, "limit": 1000}
-        with requests.get(url, params=body,
-                          headers={'X-WallarmAPI-UUID': self.__uuid, 'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-        return response.json()
+        params = {f"filter[clientid]": self.clientid, "limit": limit}
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, params=params)
+        return response
 
     @_Decorators.try_decorator
-    async def get_blacklist_hist(self, start='today', end=None):
+    async def get_blacklist_hist(self, search_time, limit=1000):
         """The method to get blacklist history"""
 
-        if start in ['today', 'last day', 'yesterday']:
-            start = int((datetime.date.today() - datetime.timedelta(1)).strftime("%s"))
-        if start == 'last week':
-            start = int((datetime.date.today() - datetime.timedelta(7)).strftime("%s"))
-        if start == 'last month':
-            start = int((datetime.date.today() - datetime.timedelta(30)).strftime("%s"))
+        start = search_time[0][0]
+        end = search_time[0][1]
 
         url = f'https://{self.__api}/v3/blacklist/history'
         continuation = None
         full_resp = {}
         flag = True
         body = {"filter[clientid]": self.clientid, "filter[start_time]": start, "filter[end_time]": end,
-                "limit": 1000, "continuation": continuation}
+                "limit": limit, "continuation": continuation}
         while True:
             with requests.get(url, params=body,
                               headers={'X-WallarmAPI-UUID': self.__uuid,
                                        'X-WallarmAPI-Secret': self.__secret}) as response:
-                if response.status_code not in [200, 201, 202, 204, 304]:
+                if response.status not in [200, 201, 202, 204, 304]:
                     raise NonSuccessResponse()
             continuation = response.json().get('body').get('continuation')
 
@@ -159,12 +197,9 @@ class WallarmAPI:
         if instance:
             body['action'].append({"point": ["instance"], "type": "equal", "value": instance})
 
-        with requests.post(url, json=body,
-                           headers={'X-WallarmAPI-UUID': self.__uuid,
-                                    'X-WallarmAPI-Secret': self.__secret}) as response:
-            if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
-        return response.json()
+        async with aiohttp.ClientSession() as session:
+            response = await self.fetch(session, url, body=body)
+        return response
 
 
 class SenderData:
@@ -178,12 +213,47 @@ class SenderData:
             self.es = Elasticsearch([address])
         self.address = address
 
+    @_Decorators.try_decorator
+    async def fetch(self, session, url, params=None, body=None, ssl=False, splunk_token=None):
+        if not splunk_token:
+            if params:
+                async with session.get(url, params=params, ssl=ssl) as response:
+                    if response.status not in [200, 201, 202, 204, 304]:
+                        raise NonSuccessResponse()
+                    return await response.json()
+            elif body:
+                async with session.post(url, json=body, ssl=ssl) as response:
+                    if response.status not in [200, 201, 202, 204, 304]:
+                        raise NonSuccessResponse()
+                    return await response.json()
+        else:
+            async with session.post(url, json=body,
+                                    headers={'Authorization': f'Splunk {splunk_token}'},
+                                    ssl=ssl) as response:
+                if response.status not in [200, 201, 202, 204, 304]:
+                    raise NonSuccessResponse()
+                return await response.json()
+
+    @_Decorators.try_decorator
+    async def tcp_client(self, host, port, message):
+        reader, writer = await asyncio.open_connection(host, port)
+
+        print(f'Send: {message!r}')
+        writer.write((json.dumps(message)).encode())
+        await writer.drain()
+
+        print('Close the connection')
+        writer.close()
+        await writer.wait_closed()
+
+    @_Decorators.try_decorator
     async def send_to_elastic(self, data, index='wallarm'):
         """This function sends data to ELK"""
         self.es.index(body=data, index=index)
         return print('Sent successfully')
 
-    async def send_to_collector(self, data, tag=None, token=None, verify=True):
+    @_Decorators.try_decorator
+    async def send_to_collector(self, data, tag=None, token=None, ssl=True):
         """This function sends data to HTTP/HTTPS/TCP/UDP Socket"""
         addr = urlparse(self.address)
         host = addr.hostname
@@ -193,26 +263,29 @@ class SenderData:
         socket_data = json.dumps(socket_data).encode()
 
         if scheme in ['http', 'https']:
-            if token:
-                if tag:
-                    with requests.post(f'{self.address}/{tag}', json=data, verify=verify) as response:
-                        if response.status_code not in [200, 201, 202, 204, 304]:
-                            raise NonSuccessResponse()
-                else:
-                    with requests.post(f'{self.address}/services/collector/event/1.0', json={'event': data},
-                                       headers={'Authorization': f'Splunk {token}'}, verify=verify) as response:
-                        if response.status_code not in [200, 201, 202, 204, 304]:
-                            raise NonSuccessResponse()
+            if tag:
+                async with aiohttp.ClientSession() as session:
+                    response = await self.fetch(session, f'{self.address}/{tag}', body=data, ssl=ssl)
+                return response
             else:
-                with requests.post(f'{self.address}/{tag}', json=data, verify=verify) as response:
-                    if response.status_code not in [200, 201, 202, 204, 304]:
-                        raise NonSuccessResponse()
+                if token:
+                    async with aiohttp.ClientSession() as session:
+                        response = await self.fetch(session, f'{self.address}/services/collector/event/1.0',
+                                                    body={'event': data}, ssl=ssl, splunk_token=token)
+                    return response
+                else:
+                    async with aiohttp.ClientSession() as session:
+                        response = await self.fetch(session, self.address, body=data, ssl=ssl)
+                    return response
+
         elif scheme == 'tcp':
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect((host, port))
-                s.sendall(socket_data)
+            try:
+                await self.tcp_client(host, port, data)
+            except Exception:
+                raise ClosedSocket
         elif scheme == 'udp':
             while len(socket_data) > 0:
+                # Blocking i/o because of weak guarantee of order
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
                     s.connect((host, port))
                     s.send(socket_data[:500])
