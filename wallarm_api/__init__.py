@@ -18,5 +18,5 @@ except ImportError:
         def emit(self, record):
             pass
 
-logger = logging.getLogger("wallarm")
+logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())

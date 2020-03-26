@@ -9,7 +9,7 @@ import requests
 import aiohttp
 import time
 from elasticsearch import Elasticsearch
-from .exceptions import NonSuccessResponse, ClosedSocket
+from .exceptions import NonSuccessResponse, ClosedSocket, NoSchemeDefined
 from .helpers import _Decorators
 
 
@@ -282,7 +282,7 @@ class SenderData:
             try:
                 await self.tcp_client(host, port, data)
             except Exception:
-                raise ClosedSocket
+                raise ClosedSocket('TCP socket is closed. Check whether it listens and available')
         elif scheme == 'udp':
             while len(socket_data) > 0:
                 # Blocking i/o because of weak guarantee of order
@@ -291,5 +291,5 @@ class SenderData:
                     s.send(socket_data[:500])
                 socket_data = socket_data[500:]
         else:
-            print("Specify one of the following schemes: http://, https://, tcp://, udp://")
+            raise NoSchemeDefined()
         print('Sent successfully')
