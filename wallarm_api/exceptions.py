@@ -11,5 +11,4 @@ class EnvVariableNotSet(Exception):
 
 
 class NoSchemeDefined(Exception):
-    print('Specify one of the following schemes: http://, https://, tcp://, udp://')
-
+    pass

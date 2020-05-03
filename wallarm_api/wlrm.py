@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 import aiohttp
 import time
+
 from elasticsearch import Elasticsearch
 from .exceptions import NonSuccessResponse, ClosedSocket, NoSchemeDefined
 from .helpers import _Decorators
@@ -31,7 +32,7 @@ class WallarmAPI:
                                             'X-WallarmAPI-Secret': self.__secret},
                                    ssl=ssl) as response:
                 if response.status not in [200, 201, 202, 204, 304]:
-                    raise NonSuccessResponse()
+                    raise NonSuccessResponse(response.status, await response.json(content_type=None))
                 return await response.json()
         elif body:
             async with session.post(url, json=body,
@@ -39,7 +40,7 @@ class WallarmAPI:
                                              'X-WallarmAPI-Secret': self.__secret},
                                     ssl=ssl) as response:
                 if response.status not in [200, 201, 202, 204, 304]:
-                    raise NonSuccessResponse()
+                    raise NonSuccessResponse(response.status, await response.json(content_type=None))
                 return await response.json()
 
     def get_clientid(self):
@@ -51,7 +52,7 @@ class WallarmAPI:
                            headers={'X-WallarmAPI-UUID': self.__uuid,
                                     'X-WallarmAPI-Secret': self.__secret}) as response:
             if response.status_code not in [200, 201, 202, 204, 304]:
-                raise NonSuccessResponse()
+                raise NonSuccessResponse(response.status_code, response.content)
         return response.json().get('body')[0].get('id')
 
     @_Decorators.try_decorator
@@ -59,7 +60,7 @@ class WallarmAPI:
         """The method to fetch unix time by human-readable filter"""
 
         url = f'https://{self.__api}/v1/search'
-        body = {"query": query, "time_zone": f'UTC{time.timezone/3600.0}'}
+        body = {"query": query, "time_zone": f'UTC{time.timezone/3600 if time.timezone/3600 != 0.0 else "+0"}'}
         async with aiohttp.ClientSession() as session:
             response = await self.fetch(session, url, body=body)
         return response
@@ -75,11 +76,11 @@ class WallarmAPI:
         return response
 
     @_Decorators.try_decorator
-    async def get_attack(self, search_time, limit=1000, offset=0):
+    async def get_attack(self, search_time, poolid=None, limit=1000, offset=0):
         """The method to fetch attacks by filter"""
 
         url = f'https://{self.__api}/v1/objects/attack'
-        body = {"filter": {"vulnid": None, "!type": ["warn"],
+        body = {"filter": {"vulnid": None, "poolid": poolid, "!type": ["warn"],
                            "time": search_time},
                 "limit": limit, "offset": offset, "order_by": "first_time", "order_desc": True}
         async with aiohttp.ClientSession() as session:
@@ -170,7 +171,7 @@ class WallarmAPI:
                               headers={'X-WallarmAPI-UUID': self.__uuid,
                                        'X-WallarmAPI-Secret': self.__secret}) as response:
                 if response.status not in [200, 201, 202, 204, 304]:
-                    raise NonSuccessResponse()
+                    raise NonSuccessResponse(response.status, await response.text)
             continuation = response.json().get('body').get('continuation')
 
             if flag:
@@ -204,34 +205,42 @@ class WallarmAPI:
 
 class SenderData:
 
-    def __init__(self, address='http://localhost:9200', http_auth=None):
-        if http_auth is not None:
-            http_auth = (urlparse(f'http://{http_auth}@example.com').username,
-                         urlparse(f'http://{http_auth}@example.com').password)
-            self.es = Elasticsearch([address], http_auth=http_auth)
-        else:
-            self.es = Elasticsearch([address])
+    def __init__(self, address='http://localhost:9200', http_auth=None, collector_type=None):
+        if collector_type == "es":
+            if http_auth is not None:
+                http_auth = (urlparse(f'http://{http_auth}@example.com').username,
+                             urlparse(f'http://{http_auth}@example.com').password)
+                self.es = Elasticsearch([address], http_auth=http_auth)
+            else:
+                self.es = Elasticsearch([address])
         self.address = address
 
     @_Decorators.try_decorator
-    async def fetch(self, session, url, params=None, body=None, ssl=False, splunk_token=None):
+    async def fetch(self, session, url, params=None, body=None, ssl=False, splunk_token=None, content_type=None):
         if not splunk_token:
             if params:
                 async with session.get(url, params=params, ssl=ssl) as response:
                     if response.status not in [200, 201, 202, 204, 304]:
-                        raise NonSuccessResponse()
+                        raise NonSuccessResponse(response.status, await response.json(content_type=None))
                     return await response.json()
             elif body:
-                async with session.post(url, json=body, ssl=ssl) as response:
-                    if response.status not in [200, 201, 202, 204, 304]:
-                        raise NonSuccessResponse()
-                    return await response.json()
+                if content_type == 'text/plain':
+                    async with session.post(url, data=json.dumps(body, indent=4), ssl=ssl, headers={'content-type': content_type}) as response:
+                        if response.status not in [200, 201, 202, 204, 304]:
+                            raise NonSuccessResponse(response.status, await response.json(content_type=None))
+                        return await response.json(content_type=None)
+                else:
+                    async with session.post(url, json=body, ssl=ssl) as response:
+                        if response.status not in [200, 201, 202, 204, 304]:
+                            raise NonSuccessResponse(response.status, await response.json(content_type=None))
+                        return await response.json(content_type=None)
+
         else:
             async with session.post(url, json=body,
                                     headers={'Authorization': f'Splunk {splunk_token}'},
                                     ssl=ssl) as response:
                 if response.status not in [200, 201, 202, 204, 304]:
-                    raise NonSuccessResponse()
+                    raise NonSuccessResponse(response.status, await response.json(content_type=None))
                 return await response.json()
 
     @_Decorators.try_decorator
@@ -253,14 +262,12 @@ class SenderData:
         return print('Sent successfully')
 
     @_Decorators.try_decorator
-    async def send_to_collector(self, data, tag=None, token=None, ssl=True):
+    async def send_to_collector(self, data, tag=None, token=None, ssl=True, content_type=None):
         """This function sends data to HTTP/HTTPS/TCP/UDP Socket"""
         addr = urlparse(self.address)
         host = addr.hostname
         port = addr.port
         scheme = addr.scheme
-        socket_data = f'{tag}: {data}'
-        socket_data = json.dumps(socket_data).encode()
 
         if scheme in ['http', 'https']:
             if tag:
@@ -274,9 +281,14 @@ class SenderData:
                                                     body={'event': data}, ssl=ssl, splunk_token=token)
                     return response
                 else:
-                    async with aiohttp.ClientSession() as session:
-                        response = await self.fetch(session, self.address, body=data, ssl=ssl)
-                    return response
+                    if content_type:
+                        async with aiohttp.ClientSession() as session:
+                            response = await self.fetch(session, self.address, body=data, ssl=ssl, content_type='text/plain')
+                        return response
+                    else:
+                        async with aiohttp.ClientSession() as session:
+                            response = await self.fetch(session, self.address, body=data, ssl=ssl)
+                        return response
 
         elif scheme == 'tcp':
             try:
@@ -284,6 +296,8 @@ class SenderData:
             except Exception:
                 raise ClosedSocket('TCP socket is closed. Check whether it listens and available')
         elif scheme == 'udp':
+            socket_data = f'{tag}: {data}'
+            socket_data = json.dumps(socket_data).encode()
             while len(socket_data) > 0:
                 # Blocking i/o because of weak guarantee of order
                 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -291,5 +305,5 @@ class SenderData:
                     s.send(socket_data[:500])
                 socket_data = socket_data[500:]
         else:
-            raise NoSchemeDefined()
+            raise NoSchemeDefined("Specify one of the following schemes: http://, https://, tcp://, udp://")
         print('Sent successfully')

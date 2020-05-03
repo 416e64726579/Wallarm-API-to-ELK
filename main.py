@@ -9,7 +9,7 @@ from wallarm_api.wlrm import WallarmAPI, SenderData
 def get_env():
     UUID = os.environ.get('WALLARM_UUID')
     SECRET = os.environ.get('WALLARM_SECRET')
-    API = os.environ.get('WALLARM_API', 'api.wallarm.com')
+    API = os.environ.get('WALLARM_API', 'us1.api.wallarm.com')
     if None in [UUID, SECRET]:
         raise EnvVariableNotSet('Environment variables (UUID/SECRET) are not set')
     return UUID, SECRET, API
