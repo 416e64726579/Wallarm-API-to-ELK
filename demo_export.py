@@ -34,12 +34,14 @@ async def main():
     for attack_body in results[1]['body']:
         attack_ids.append(attack_body['attackid'])
     number_of_attacks = len(attack_ids)
+    offset = 1000
     while attacks_count > number_of_attacks:
         if attacks_count > number_of_attacks:
-            results = await api_call.get_attack(search_time, offset=1000)
+            results = await api_call.get_attack(search_time, offset=offset)
             for attack_body in results['body']:
                 attack_ids.append(attack_body['attackid'])
             number_of_attacks += 1000
+            offset += 1000
         else:
             break
 
