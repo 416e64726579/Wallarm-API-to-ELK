@@ -1,4 +1,4 @@
-FROM python:3.8-alpine
+FROM python:3.13.2-alpine
 ENV PYTHON_VERSION=3.8
 
 WORKDIR /exporter
